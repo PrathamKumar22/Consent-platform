@@ -1,0 +1,155 @@
+version: "3.9"
+
+# ═══════════════════════════════════════════════════════════════
+#  Adaptive Consent Intelligence Platform — Full Stack
+#
+#  Services:
+#   frontend   → React app              :3000
+#   backend    → Node.js + Express      :5000
+#   couchdb    → Document store         :5984
+#   opa        → Policy enforcement     :8181
+#   ocr        → PaddleOCR service      :8000
+#   fabric-ca  → Fabric CA              :7054  (optional)
+#   peer0      → Fabric Peer            :7051  (optional)
+#   orderer    → Fabric Orderer         :7050  (optional)
+# ═══════════════════════════════════════════════════════════════
+
+networks:
+  consent-net:
+    driver: bridge
+
+volumes:
+  couchdb-data:
+  fabric-data:
+
+services:
+
+  # ── React Frontend ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:5000
+    depends_on:
+      - backend
+    networks:
+      - consent-net
+
+  # ── Node.js Backend ────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: 5000
+      COUCHDB_URL: http://admin:password@couchdb:5984
+      COUCHDB_NAME: consent_db
+      OPA_URL: http://opa:8181
+      OCR_SERVICE_URL: http://ocr:8000
+      FABRIC_ENABLED: "false"
+    depends_on:
+      - couchdb
+      - opa
+      - ocr
+    networks:
+      - consent-net
+    restart: unless-stopped
+
+  # ── CouchDB ────────────────────────────────────────────────
+  couchdb:
+    image: couchdb:3.3
+    ports:
+      - "5984:5984"
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: password
+    volumes:
+      - couchdb-data:/opt/couchdb/data
+    networks:
+      - consent-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5984/_up"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Open Policy Agent ──────────────────────────────────────
+  opa:
+    image: openpolicyagent/opa:0.59.0
+    ports:
+      - "8181:8181"
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=info"
+      - "/policies"
+    volumes:
+      - ./backend/opa/policies:/policies:ro
+    networks:
+      - consent-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── PaddleOCR Service ──────────────────────────────────────
+  ocr:
+    build:
+      context: ./ocr-service
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    networks:
+      - consent-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ── Hyperledger Fabric (optional — set FABRIC_ENABLED=true) ─
+  # Uncomment to enable real Fabric network
+
+  # orderer:
+  #   image: hyperledger/fabric-orderer:2.5
+  #   environment:
+  #     - ORDERER_GENERAL_LOGLEVEL=INFO
+  #     - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+  #     - ORDERER_GENERAL_GENESISMETHOD=file
+  #     - ORDERER_GENERAL_GENESISFILE=/var/hyperledger/orderer/orderer.genesis.block
+  #     - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+  #     - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+  #   ports:
+  #     - "7050:7050"
+  #   volumes:
+  #     - ./fabric/crypto-config:/var/hyperledger/orderer
+  #     - fabric-data:/var/hyperledger/production/orderer
+  #   networks:
+  #     - consent-net
+
+  # peer0:
+  #   image: hyperledger/fabric-peer:2.5
+  #   environment:
+  #     - CORE_PEER_ID=peer0.org1.example.com
+  #     - CORE_PEER_ADDRESS=peer0:7051
+  #     - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+  #     - CORE_PEER_LOCALMSPID=Org1MSP
+  #     - CORE_PEER_MSPCONFIGPATH=/etc/hyperledger/fabric/msp
+  #     - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+  #     - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb:5984
+  #     - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+  #     - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=password
+  #   ports:
+  #     - "7051:7051"
+  #   depends_on:
+  #     - orderer
+  #     - couchdb
+  #   networks:
+  #     - consent-net
