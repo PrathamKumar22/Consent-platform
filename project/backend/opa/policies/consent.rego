@@ -104,7 +104,7 @@ gdpr_marketing_violation {
 dpdp_sharing_violation {
     input.consent.jurisdiction == "India"
     input.request.sharingParty == "third_parties"
-    not "third_parties" == input.consent.sharingParties[_]
+    not input.consent.sharingParties["third_parties"]
 }
 
 # Composite jurisdiction deny
